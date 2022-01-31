@@ -17,6 +17,8 @@ public class InvestFundsManager {
     private final String DB_URL;
     private final String DB_PROPERTIES;
     private final boolean DEBUG = true;
+    private final TipoAtualizacao ATUALIZACAO = TipoAtualizacao.COMPLETA;
+
     private Connection connection;
     private final String datafilename;
 
@@ -122,7 +124,7 @@ public class InvestFundsManager {
      *        | beta              | decimal(27,12) | YES  |     | NULL    |       |
      *        +-------------------+----------------+------+-----+---------+-------+
      */
-    /*
+    /* (APÓS A EXECUÇÃO DO SCRIPT ./src/main/resources/benchmark.sql)
      * mysql> DESCRIBE tipo_benchmarks;
      *        +----------------+--------------+------+-----+---------+----------------+
      *        | Field          | Type         | Null | Key | Default | Extra          |
@@ -333,7 +335,7 @@ public class InvestFundsManager {
                                 } else {
                                     desvioPadrao = 0.0;
                                 }
-                                double maxQuota = -1e6, drawDown, maxDrawdown = 0.0; // TODO: MaxQuota é muito negativa pois pode haver quotas negativas (check this out)
+                                double maxQuota = Double.MIN_VALUE, drawDown, maxDrawdown = 0.0; // TODO: MaxQuota é muito negativa pois pode haver quotas negativas (check this out)
                                 for (Double quota : quotas) {
                                     if (quota > maxQuota) {
                                         maxQuota = quota;
@@ -387,7 +389,7 @@ public class InvestFundsManager {
      * @throws SQLException quando algum dado necessário não pode ser acessado pelo banco
      */
     private List<Integer> calcula_mercado(Connection connection, ExecutionInformation execucao) throws SQLException {
-        String sql = "SELECT cnpj_fundo_id FROM doc_inf_diario_fundos WHERE cnpj_fundo_id NOT IN (SELECT cnpj_fundo_id FROM indicadores_fundos)";
+        String sql = "SELECT DISTINCT cnpj_fundo_id FROM doc_inf_diario_fundos WHERE NOT EXISTS (SELECT cnpj_fundo_id FROM indicadores_fundos WHERE indicadores_fundos.cnpj_fundo_id = doc_inf_diario_fundos.cnpj_fundo_id)";
         Statement st = connection.createStatement();
         java.sql.ResultSet rs = st.executeQuery(sql);
         List<Integer> fundosSemIndicadoresDeMercado = new ArrayList<>();
@@ -409,6 +411,7 @@ public class InvestFundsManager {
      */
     private BigDecimal rentabilidade_daria_fundo(int idFundo, String data) throws SQLException {
         final String IMPOSSIVEL_DE_BUSCAR_RENTABILIDADE = "Não foi possível buscar a rentabilidade diária";
+        // TODO
         String sql = "SELECT rentab_diaria FROM doc_inf_diario_fundos WHERE DT_COMPTC=" + data + " and cnpj_fundo_id=" + idFundo;
         Statement st = connection.createStatement();
         java.sql.ResultSet rs = st.executeQuery(sql);
@@ -574,6 +577,7 @@ public class InvestFundsManager {
             return cache.get(data);
         }
         // busca no banco de dados a média das rentabilidade diárias dos fundos pertencetes ao mercado
+        // TODO
         String sql = "SELECT AVG(rentab_diaria) as rentabilidadeBanchmark FROM doc_inf_diario_fundos WHERE DT_COMPTC=" + data + " and cnpj_fundo_id IN" +
                 "(SELECT cnpj_fundo_id FROM indicadores_fundos WHERE tipo_benchmark_id=" + tipoBenchmarkId + " )";
         Statement st = connection.createStatement();
@@ -604,6 +608,15 @@ public class InvestFundsManager {
                 .divide(volatibilidadeFundo.subtract(volatibilidadeMercado), DECIMAL_PRECISION);
     }
 
+    /**
+     * Cálcula o indicador de Sharpe para um fundo e seu mercado em um intervalo de tempo.
+     * @param idFundo ID do fundo
+     * @param tipoBenchmarkId ID do benchmark (mercado)
+     * @param dataFinal Data final do intervalo
+     * @param numValores Número de valores (dias) no intervalo
+     * @return Indicador sharpe
+     * @throws SQLException quando não for possível acessar algum valor no banco
+     */
     private BigDecimal sharpe_fundo(int idFundo, int tipoBenchmarkId, String dataFinal, int numValores) throws SQLException {
         BigDecimal rentabilidadeMediaFundo = rentabilidade_media_fundo(idFundo, dataFinal, numValores);
         BigDecimal volatibilidadeFundo = desvio_padrao_fundo(idFundo, dataFinal, numValores);
@@ -612,6 +625,16 @@ public class InvestFundsManager {
                 .divide(volatibilidadeFundo, DECIMAL_PRECISION);
     }
 
+    /**
+     * Cálcula o indicador de Beta para um fundo e seu mercado em um intervalo de tempo.
+     * Também avalia-se quantos meses o fundo está acima do mercado.
+     * @param idFundo ID do fundo
+     * @param tipoBenchmarkId ID do benchmark (mercado)
+     * @param dataFinal Data final do intervalo
+     * @param numValores Número de valores (dias) no intervalo
+     * @return Indicador beta
+     * @throws SQLException quando não for possível acessar algum valor no banco
+     */
     private BigDecimal beta_fundo(int idFundo, int tipoBenchmarkId, String dataFinal, int numValores) throws SQLException {
         List<BigDecimal> rentabilidadesDiariasFundo = rentabilidade_daria_fundo(idFundo, dataFinal, numValores);
         BigDecimal rentabilidadeMediaFundo = rentabilidade_media_fundo(idFundo, dataFinal, numValores);
@@ -631,8 +654,18 @@ public class InvestFundsManager {
         return conv.divide(volatibilidadeMercado, DECIMAL_PRECISION);
     }
 
+    /**
+     * Calcula os indicadores de Sharde de um fundo. Os Resultados são armazenados na
+     * tabela 'indicadores_fundos'. O indicador calculado é referentes ao mercado que
+     * o fundo pertence.
+     * @param connection Conexão com o banco de dados
+     * @param idFundo ID do fundo
+     * @param execucao Gerador de estatística da execução
+     * @throws SQLException Quando não é possível acessar o banco
+     */
     private void calcula_indice_sharp(Connection connection, int idFundo, ExecutionInformation execucao) throws SQLException {
         // Seleciona os indices do fundo onde sharpe não foi calculado
+        // TODO
         String sql = "SELECT periodo_meses, num_valores, data_final, tipo_benchmark_id FROM indicadores_fundos WHERE cnpj_fundo_id=" + idFundo + " and sharpe=NULL";
         Statement st = connection.createStatement();
         Statement st2 = connection.createStatement();
@@ -656,7 +689,6 @@ public class InvestFundsManager {
                 sql = "UPDATE indicadores_fundos SET sharpe=" + sharpe + " WHERE cnpj_fundo_id=" + idFundo + " and periodo_meses=" + numMeses + " and data_final=" + dataFinal;
                 st2.execute(sql);
 
-                if (!DEBUG) { connection.commit(); }
                 long tempoAtual = System.currentTimeMillis();
                 execucao.setTempoProcessamentoParte(tempoAtual - execucao.getFimProcessamento());
                 execucao.setTempoProcessamentoTotal(tempoAtual - execucao.getInicioProcessamento());
@@ -666,39 +698,59 @@ public class InvestFundsManager {
                 execucao.incrementCountRecordsComErro();
             }
         }
+        if (!DEBUG) { connection.commit(); }
     }
 
+    /**
+     * Calcula os indicadores Beta de um fundo. Os Resultados são armazenados na
+     * tabela 'indicadores_fundos'. O indicador calculado é referentes ao mercado que
+     * o fundo pertence.
+     * @param connection Conexão com o banco de dados
+     * @param idFundo ID do fundo
+     * @param execucao Gerador de estatística da execução
+     * @throws SQLException Quando não é possível acessar o banco
+     */
     private void calcula_indice_beta(Connection connection, int idFundo, ExecutionInformation execucao) throws SQLException {
         // Seleciona os indices do fundo onde beta não foi calculado
+        // TODO
         String sql = "SELECT periodo_meses, num_valores, data_final, tipo_benchmark_id FROM indicadores_fundos WHERE cnpj_fundo_id=" + idFundo + " and beta=NULL";
         Statement st = connection.createStatement();
         Statement st2 = connection.createStatement();
         java.sql.ResultSet rs = st.executeQuery(sql);
+        int mesesAcimaDoMercado = 0;
         while (rs.next()) {
-            // periodo_meses não pode ser nullo
-            int numMeses = rs.getInt("periodo_meses");
+            try {
+                // periodo_meses não pode ser nullo
+                int numMeses = rs.getInt("periodo_meses");
 
-            int numValores = rs.getInt("num_valores");
-            if (rs.wasNull()) { throw new SQLException(); }
+                int numValores = rs.getInt("num_valores");
+                if (rs.wasNull()) { throw new SQLException(); }
 
-            // data_final não pode ser nulo
-            String dataFinal = rs.getDate("data_final").toString();
+                // data_final não pode ser nulo
+                String dataFinal = rs.getDate("data_final").toString();
 
-            int tipoBenchmarkId = rs.getInt("tipo_benchmark_id");
-            if (rs.wasNull()) { throw new SQLException(); }
+                int tipoBenchmarkId = rs.getInt("tipo_benchmark_id");
+                if (rs.wasNull()) { throw new SQLException(); }
 
-            // Chaves privada é (cnpj_fundo_id, periodo_meses, data_final)
-            BigDecimal beta = beta_fundo(idFundo, tipoBenchmarkId, dataFinal, numValores);
-            sql = "UPDATE indicadores_fundos SET beta=" + beta + " WHERE cnpj_fundo_id=" + idFundo + " and periodo_meses=" + numMeses + " and data_final=" + dataFinal;
-            st2.execute(sql);
+                // Chaves privada é (cnpj_fundo_id, periodo_meses, data_final)
+                BigDecimal beta = beta_fundo(idFundo, tipoBenchmarkId, dataFinal, numValores);
+                if (beta.compareTo(BigDecimal.ONE) > 0) {
+                    mesesAcimaDoMercado++;
+                }
 
-            if (!DEBUG) { connection.commit(); }
-            long tempoAtual = System.currentTimeMillis();
-            execucao.setTempoProcessamentoParte(tempoAtual - execucao.getFimProcessamento());
-            execucao.setTempoProcessamentoTotal(tempoAtual - execucao.getInicioProcessamento());
-            System.out.println("info: (" + idFundo + ", " + numMeses + ", " + dataFinal + ") processado o índice de beta (" + execucao.getTempoProcessamentoParte() + " ms)");//, sendo " + countRecordsComErro + " com erro e " + countRecordsRepetidos + " preexistentes");
-            execucao.setFimProcessamento(tempoAtual);
+                sql = "UPDATE indicadores_fundos SET beta=" + beta + ", meses_acima_bench=" + mesesAcimaDoMercado + " WHERE cnpj_fundo_id=" + idFundo + " and periodo_meses=" + numMeses + " and data_final=" + dataFinal;
+                st2.execute(sql);
+
+                long tempoAtual = System.currentTimeMillis();
+                execucao.setTempoProcessamentoParte(tempoAtual - execucao.getFimProcessamento());
+                execucao.setTempoProcessamentoTotal(tempoAtual - execucao.getInicioProcessamento());
+                System.out.println("info: (" + idFundo + ", " + numMeses + ", " + dataFinal + ") processado o índice de beta (" + execucao.getTempoProcessamentoParte() + " ms)");//, sendo " + countRecordsComErro + " com erro e " + countRecordsRepetidos + " preexistentes");
+                execucao.setFimProcessamento(tempoAtual);
+            } catch (SQLException e) {
+                execucao.incrementCountRecordsComErro();
+            }
         }
+        if (!DEBUG) { connection.commit(); }
     }
 
     /**
@@ -715,9 +767,11 @@ public class InvestFundsManager {
             List<Integer> fundosSemIndicadoresDeMercado = calcula_mercado(connection, execucao);
             calcula_indice_sharp(connection, idFundo, execucao);
             calcula_indice_beta(connection, idFundo, execucao);
-            for (Integer idFundo_ : fundosSemIndicadoresDeMercado) {
-                calcula_indice_sharp(connection, idFundo_, execucao);
-                calcula_indice_beta(connection, idFundo_, execucao);
+            if (ATUALIZACAO == TipoAtualizacao.COMPLETA) {
+                for (Integer idFundo_ : fundosSemIndicadoresDeMercado) {
+                    calcula_indice_sharp(connection, idFundo_, execucao);
+                    calcula_indice_beta(connection, idFundo_, execucao);
+                }
             }
         } catch (SQLException ex) {
             Logger.getLogger(InvestFundsManager.class.getName()).log(Level.SEVERE, null, ex);
@@ -757,5 +811,15 @@ public class InvestFundsManager {
         private T getSecond() {
             return this.second;
         }
+    }
+
+    /**
+     * Indica que, se atualizar o mercado, deve-se calcular todos os indicadores de
+     * mercado dos fundos atualizados. Completa atualizará todos, Parcial atualizará
+     * somente o fundo de interesse.
+     */
+    private enum TipoAtualizacao {
+        COMPLETA,
+        PARCIAL
     }
 }
