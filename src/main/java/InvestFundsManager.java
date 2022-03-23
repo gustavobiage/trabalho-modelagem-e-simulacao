@@ -22,7 +22,11 @@ public class InvestFundsManager {
     private Connection connection;
     private final String datafilename;
 
-    public InvestFundsManager() throws ClassNotFoundException, SQLException {
+    public InvestFundsManager() throws SQLException, ClassNotFoundException {
+        this(false);
+    }
+
+    public InvestFundsManager(boolean connectToDB) throws ClassNotFoundException, SQLException {
         databaseName = "investFunds";
         databaseUsername = "<usuário>";
         databasePassword = "<senha>";
@@ -30,22 +34,19 @@ public class InvestFundsManager {
         DB_PROPERTIES = "?useSSL=false";
         DB_URL = "jdbc:mysql://localhost:3306/";
         datafilename = "<id-do-fundo>";
-
         this.rentabilidadeDiariaMercadoCache = new TreeMap<>();
         this.rentabilidadeMediaMercadoCache = new TreeMap<>();
         this.desvioPadraoMercadoCache = new TreeMap<>();
-
-        ConnectToDB();
+        if (connectToDB) {
+            ConnectToDB();
+        }
         init_cache_mercado(connection);
-
-        Object[] estatistica = calcula_indicadores_DOC_INF_DIARIO(connection);
-        System.out.println("countRecords=" + estatistica[0] + ", countRecordsComErro=" + estatistica[1] + ", countRecordsRepetidos=" + estatistica[2]);
     }
 
     /**
      * Precisão depois do ponto definido pelo tipo DECIMAL(27, 12) utilizada no banco
      */
-    private static final MathContext PRECISAO_DECIMAL = new MathContext(12);
+    private static final MathContext PRECISAO_DECIMAL = new MathContext(64);
     /**
      * Formatador de data, utilizado para converter datas em String no banco para instâncias de Data (vice-versa)
      */
@@ -54,15 +55,15 @@ public class InvestFundsManager {
     /**
      * Cache de rentabilidade diária do mercado
      */
-    private final Map<Integer, Map<String, BigDecimal>> rentabilidadeDiariaMercadoCache;
+    protected final Map<Integer, Map<String, BigDecimal>> rentabilidadeDiariaMercadoCache;
     /**
      * Cache de rentabilidade média do mercado
      */
-    private final Map<Integer, Map<Pair<String, Integer>, BigDecimal>> rentabilidadeMediaMercadoCache;
+    protected final Map<Integer, Map<Pair<String, Integer>, BigDecimal>> rentabilidadeMediaMercadoCache;
     /**
      * Cache de volatibilidade do mercado
      */
-    private final Map<Integer, Map<Pair<String, Integer>, BigDecimal>> desvioPadraoMercadoCache;
+    protected final Map<Integer, Map<Pair<String, Integer>, BigDecimal>> desvioPadraoMercadoCache;
 
     /**
      * Inicia a cache de indicadores de mercado. Evita recalcular estes indicadores, que
@@ -71,7 +72,7 @@ public class InvestFundsManager {
      * @param connection Conexão com o banco de dados.
      * @throws SQLException Quando não é possível acessar o banco.
      */
-    private void init_cache_mercado(Connection connection) throws SQLException {
+    protected void init_cache_mercado(Connection connection) throws SQLException {
         String sql;
         Statement st = connection.createStatement();
         java.sql.ResultSet rs;
@@ -238,13 +239,13 @@ public class InvestFundsManager {
                 st2.execute(sql);
                 execucao.incrementCountRecords();
 
-                if (execucao.getCountRecords() % 10e2 == 0) {
+                if (execucao.getCountRecords() % 1e2 == 0) {
                     if (!DEBUG) { connection.commit(); }
-                    if (execucao.getCountRecords() % 10e3 == 0) {
+                    if (execucao.getCountRecords() % 1e3 == 0) {
                         long tempoAtual = System.currentTimeMillis();
                         execucao.setTempoProcessamentoParte(tempoAtual - execucao.getFimProcessamento());
                         execucao.setTempoProcessamentoTotal(tempoAtual - execucao.getInicioProcessamento());
-                        System.out.println("info: " + execucao.getCountRecords() / 10e3 + "K registros processados até o momento (totalizando " + execucao.getTempoProcessamentoTotal().intValue() + " ms)");//, sendo " + countRecordsComErro + " com erro e " + countRecordsRepetidos + " preexistentes");
+                        System.out.println("info: " + execucao.getCountRecords() / 1e3 + "K registros processados até o momento (totalizando " + execucao.getTempoProcessamentoTotal().intValue() + " ms)");//, sendo " + countRecordsComErro + " com erro e " + countRecordsRepetidos + " preexistentes");
                         execucao.setFimProcessamento(tempoAtual);
                     }
                 }
@@ -450,7 +451,7 @@ public class InvestFundsManager {
      * @return Lista ordenada de rentabilidades diária do fundo
      * @throws SQLException Quando não foi possível encontrar alguma rentabilidade diária no banco
      */
-    private List<BigDecimal> rentabilidade_daria_fundo(Connection connection, int idFundo, String data, int numValores) throws SQLException {
+    protected List<BigDecimal> rentabilidade_daria_fundo(Connection connection, int idFundo, String data, int numValores) throws SQLException {
         final String IMPOSSIVEL_DE_CALCULAR_RENTABILIDADES = "Não foi possível calcular as rentabilidades diárias";
         List<BigDecimal> rentabilidadesDiarias = new ArrayList<>();
         GregorianCalendar calendar = new GregorianCalendar();
@@ -475,7 +476,7 @@ public class InvestFundsManager {
      * @return desvio padrão do mercado no intervalo
      * @throws SQLException quando algum dado necessário não pode ser acessado pelo banco
      */
-    private BigDecimal desvio_padrao_fundo(Connection connection, int idFundo, String dataFinal, int numValores) throws SQLException {
+    protected BigDecimal desvio_padrao_fundo(Connection connection, int idFundo, String dataFinal, int numValores) throws SQLException {
         BigDecimal rentabilidadeMedia = rentabilidade_media_fundo(connection, idFundo, dataFinal, numValores);
         List<BigDecimal> rentabilidadesDiarias = rentabilidade_daria_fundo(connection, idFundo, dataFinal, numValores);
         BigDecimal desvioPadrao = new BigDecimal(0);
@@ -495,41 +496,13 @@ public class InvestFundsManager {
      * @return Rentabilidade média
      * @throws SQLException Quando não foi possível encontrar alguma rentabilidade diária do intervalo no banco
      */
-    private BigDecimal rentabilidade_media_fundo(Connection connection, int idFundo, String dataFinal, int numValores) throws SQLException {
+    protected BigDecimal rentabilidade_media_fundo(Connection connection, int idFundo, String dataFinal, int numValores) throws SQLException {
         List<BigDecimal> rentabilidadesDiarias = rentabilidade_daria_fundo(connection, idFundo, dataFinal, numValores);
         BigDecimal rentabilidadeSoma = new BigDecimal(0);
         for (BigDecimal rentabilidadeDiaria : rentabilidadesDiarias) {
             rentabilidadeSoma = rentabilidadeSoma.add(rentabilidadeDiaria);
         }
         return rentabilidadeSoma.divide(new BigDecimal(numValores), PRECISAO_DECIMAL);
-    }
-
-    /**
-     * Busca o desvio padrão do mercado neste intervalo de tempo. Utiliza uma cache para evitar o cálculo de
-     * valores já calculados.
-     * @param tipoBenchmarkId ID do benchmark (mercado)
-     * @param dataFinal Data final do intervalo a ser calculado o desvio padrão
-     * @param numValores Número de entradas (dias) pertencentes ao intervalo
-     * @return desvio padrão do mercado no intervalo
-     * @throws SQLException quando algum dado necessário não pode ser acessado pelo banco
-     */
-    private BigDecimal desvio_padrao_mercado(Connection connection, int tipoBenchmarkId, String dataFinal, int numValores) throws SQLException {
-        Pair<String, Integer> cacheEntry = new Pair<>(dataFinal, numValores);
-        Map<Pair<String, Integer>, BigDecimal> cache = this.desvioPadraoMercadoCache.get(tipoBenchmarkId);
-        if (cache.containsKey(cacheEntry)) { // Já foi calculado?
-            return cache.get(cacheEntry);
-        }
-        BigDecimal rentabilidadeMedia = rentabilidade_media_mercado(connection, tipoBenchmarkId, dataFinal, numValores);
-        List<BigDecimal> rentabilidadeDiarias = rentabilidade_diaria_mercado(connection, tipoBenchmarkId, dataFinal, numValores);
-
-        BigDecimal desvioPadrao = new BigDecimal(0);
-        for (BigDecimal rentabilidadeDiaria : rentabilidadeDiarias) {
-            desvioPadrao = desvioPadrao.add(rentabilidadeDiaria.subtract(rentabilidadeMedia).pow(2, PRECISAO_DECIMAL));
-        }
-        desvioPadrao = desvioPadrao.divide(new BigDecimal(numValores), PRECISAO_DECIMAL);
-        desvioPadrao = desvioPadrao.sqrt(PRECISAO_DECIMAL);
-        cache.put(cacheEntry, desvioPadrao);
-        return  desvioPadrao;
     }
 
     /**
@@ -541,7 +514,7 @@ public class InvestFundsManager {
      * @return rentabilidade média do mercado
      * @throws SQLException quando algum dado necessário não pode ser acessado pelo banco
      */
-    private BigDecimal rentabilidade_media_mercado(Connection connection, int tipoBenchmarkId, String dataFinal, int numValores) throws SQLException {
+    protected BigDecimal rentabilidade_media_mercado(Connection connection, int tipoBenchmarkId, String dataFinal, int numValores) throws SQLException {
         Pair<String, Integer> cacheEntry = new Pair<>(dataFinal, numValores);
         Map<Pair<String, Integer>, BigDecimal> cache = this.rentabilidadeMediaMercadoCache.get(tipoBenchmarkId);
         if (cache.containsKey(cacheEntry)) { // Já foi calculado?
@@ -566,7 +539,7 @@ public class InvestFundsManager {
      * @return Lista de rentabilidade diárias ordenada por tempo
      * @throws SQLException quando algum dado necessário não pode ser acessado pelo banco
      */
-    private List<BigDecimal> rentabilidade_diaria_mercado(Connection connection, int tipoBenchmarkId, String dataFinal, int numValores) throws SQLException {
+    protected List<BigDecimal> rentabilidade_diaria_mercado(Connection connection, int tipoBenchmarkId, String dataFinal, int numValores) throws SQLException {
         final String IMPOSSIVEL_DE_CALCULAR_RENTABILIDADES = "Não foi possível calcular as rentabilidades diárias";
         List<BigDecimal> rentabilidadesDiaria = new ArrayList<>();
         GregorianCalendar calendar = new GregorianCalendar();
@@ -581,6 +554,39 @@ public class InvestFundsManager {
             return rentabilidadesDiaria;
         } catch (ParseException ignore) { }
         throw new SQLException(IMPOSSIVEL_DE_CALCULAR_RENTABILIDADES);
+    }
+
+    /**
+     * Busca a volatilidade do mercado neste intervalo de tempo. Utiliza uma cache para evitar o cálculo de
+     * valores já calculados.
+     * @param tipoBenchmarkId ID do benchmark (mercado)
+     * @param dataFinal Data final do intervalo a ser calculado o desvio padrão
+     * @param numValores Número de entradas (dias) pertencentes ao intervalo
+     * @return desvio padrão do mercado no intervalo
+     * @throws SQLException quando algum dado necessário não pode ser acessado pelo banco
+     */
+    protected BigDecimal volatilidade_mercado(Connection connection, int tipoBenchmarkId, String dataFinal, int numValores) throws SQLException {
+        Pair<String, Integer> cacheEntry = new Pair<>(dataFinal, numValores);
+        Map<Pair<String, Integer>, BigDecimal> cache = this.desvioPadraoMercadoCache.get(tipoBenchmarkId);
+        if (cache.containsKey(cacheEntry)) {
+            return cache.get(cacheEntry);
+        }
+        // busca no banco de dados todos os fundos deste mercado
+        // TODO
+        String sql = "SELECT DISTINCT(cnpj_fundo_id) FROM doc_inf_diario_fundos WHERE DT_COMPTC=" + dataFinal + " and cnpj_fundo_id IN" +
+                "(SELECT cnpj_fundo_id FROM indicadores_fundos WHERE tipo_benchmark_id=" + tipoBenchmarkId + " )";
+        Statement st = connection.createStatement();
+        java.sql.ResultSet rs = st.executeQuery(sql);
+        BigDecimal volatilidade = BigDecimal.ZERO;
+        while (rs.next()) {
+            // Soma seus desvios padrões
+            int idFundo = rs.getInt("cnpj_fundo_id");
+            BigDecimal devPadFundo = desvio_padrao_fundo(connection, idFundo, dataFinal, numValores);
+            volatilidade = volatilidade.add(devPadFundo);
+        }
+        volatilidade = volatilidade.divide(new BigDecimal(numValores), PRECISAO_DECIMAL);
+        cache.put(cacheEntry, volatilidade);
+        return volatilidade;
     }
 
     /**
@@ -624,7 +630,7 @@ public class InvestFundsManager {
      */
     private BigDecimal sharpe_generalizado_fundo(Connection connection, BigDecimal rentabilidadeMediaFundo, BigDecimal volatilidadeFundo, int tipoBenchmarkId, String dataFinal, int numValores) throws SQLException {
         BigDecimal rentabilidadeMediaMercado = rentabilidade_media_mercado(connection, tipoBenchmarkId, dataFinal, numValores);
-        BigDecimal volatilidadeMercado = desvio_padrao_mercado(connection, tipoBenchmarkId, dataFinal, numValores);
+        BigDecimal volatilidadeMercado = volatilidade_mercado(connection, tipoBenchmarkId, dataFinal, numValores);
         return rentabilidadeMediaFundo.subtract(rentabilidadeMediaMercado)
                 .divide(volatilidadeFundo.subtract(volatilidadeMercado), PRECISAO_DECIMAL);
     }
@@ -638,7 +644,7 @@ public class InvestFundsManager {
      * @return Indicador sharpe generalizado
      * @throws SQLException quando não for possível acessar algum valor no banco
      */
-    private BigDecimal sharpe_generalizado_fundo(Connection connection, int idFundo, int tipoBenchmarkId, String dataFinal, int numValores) throws SQLException {
+    protected BigDecimal sharpe_generalizado_fundo(Connection connection, int idFundo, int tipoBenchmarkId, String dataFinal, int numValores) throws SQLException {
         BigDecimal rentabilidadeMediaFundo = rentabilidade_media_fundo(connection, idFundo, dataFinal, numValores);
         BigDecimal volatilidadeFundo = desvio_padrao_fundo(connection, idFundo, dataFinal, numValores);
         return sharpe_generalizado_fundo(connection, rentabilidadeMediaFundo, volatilidadeFundo, tipoBenchmarkId, dataFinal, numValores);
@@ -672,7 +678,7 @@ public class InvestFundsManager {
      * @return Indicador sharpe
      * @throws SQLException quando não for possível acessar algum valor no banco
      */
-    private BigDecimal sharpe_fundo(Connection connection, int idFundo, int tipoBenchmarkId, String dataFinal, int numValores) throws SQLException {
+    protected BigDecimal sharpe_fundo(Connection connection, int idFundo, int tipoBenchmarkId, String dataFinal, int numValores) throws SQLException {
         BigDecimal rentabilidadeMediaFundo = rentabilidade_media_fundo(connection, idFundo, dataFinal, numValores);
         BigDecimal volatilidadeFundo = desvio_padrao_fundo(connection, idFundo, dataFinal, numValores);
         return sharpe_fundo(connection, rentabilidadeMediaFundo, volatilidadeFundo, tipoBenchmarkId, dataFinal, numValores);
@@ -693,7 +699,7 @@ public class InvestFundsManager {
         List<BigDecimal> rentabilidadesDiariasFundo = rentabilidade_daria_fundo(connection, idFundo, dataFinal, numValores);
         List<BigDecimal> rentabilidadeDiariasMercado = rentabilidade_diaria_mercado(connection, idFundo, dataFinal, numValores);
         BigDecimal rentabilidadeMediaMercado = rentabilidade_media_mercado(connection, tipoBenchmarkId, dataFinal, numValores);
-        BigDecimal volatibilidadeMercado = desvio_padrao_mercado(connection, tipoBenchmarkId, dataFinal, numValores);
+        BigDecimal volatibilidadeMercado = volatilidade_mercado(connection, tipoBenchmarkId, dataFinal, numValores);
         // convolução
         BigDecimal conv = new BigDecimal(0);
         for (int i = 0; i < numValores; i++) {
@@ -717,7 +723,7 @@ public class InvestFundsManager {
      * @return Indicador beta
      * @throws SQLException quando não for possível acessar algum valor no banco
      */
-    private BigDecimal beta_fundo(Connection connection, int idFundo, int tipoBenchmarkId, String dataFinal, int numValores) throws SQLException {
+    protected BigDecimal beta_fundo(Connection connection, int idFundo, int tipoBenchmarkId, String dataFinal, int numValores) throws SQLException {
         BigDecimal rentabilidadeMediaFundo = rentabilidade_media_fundo(connection, idFundo, dataFinal, numValores);
         return beta_fundo(connection, rentabilidadeMediaFundo, idFundo, tipoBenchmarkId, dataFinal, numValores);
     }
@@ -815,6 +821,14 @@ public class InvestFundsManager {
 
     /**
      * Atualiza o banco de dados com indicadores.
+     * @return Array com estatísticas de execução
+     */
+    public Object[] calcula_indicadores_DOC_INF_DIARIO() {
+        return this.calcula_indicadores_DOC_INF_DIARIO(this.connection);
+    }
+
+    /**
+     * Atualiza o banco de dados com indicadores.
      * @param connection Conexão com o banco de dados
      * @return Array com estatísticas de execução
      */
@@ -856,11 +870,36 @@ public class InvestFundsManager {
 
         @Override
         public int compareTo(Pair<U, T> p) {
-            int p1 = this.getFirst().compareTo(p.getFirst());
+            U f1 = this.getFirst();
+            U f2 = p.getFirst();
+            T s1 = this.getSecond();
+            T s2 = p.getSecond();
+            if (f1 == null && f2 == null) {
+                if (s1 == null && s2 == null) {
+                    return 0;
+                } else if (s1 == null) {
+                    return -1;
+                } else if (s2 == null) {
+                    return 1;
+                }
+                return s1.compareTo(s2);
+            } else if (f1 == null) {
+                return -1;
+            } else if (f2 == null) {
+                return 1;
+            }
+            int p1 = f1.compareTo(f2);
             if (p1 != 0) {
                 return p1;
             } else {
-                return this.getSecond().compareTo(p.getSecond());
+                if (s1 == null && s2 == null) {
+                    return 0;
+                } else if (s1 == null) {
+                    return -1;
+                } else if (s2 == null) {
+                    return 1;
+                }
+                return s1.compareTo(s2);
             }
         }
 
