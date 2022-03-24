@@ -20,7 +20,6 @@ public class InvestFundsManager {
     private final TipoAtualizacao ATUALIZACAO = TipoAtualizacao.COMPLETA;
 
     private Connection connection;
-    private final String datafilename;
 
     public InvestFundsManager() throws SQLException, ClassNotFoundException {
         this(false);
@@ -33,7 +32,6 @@ public class InvestFundsManager {
         JDBC_DRIVER = "com.mysql.jdbc.Driver";
         DB_PROPERTIES = "?useSSL=false";
         DB_URL = "jdbc:mysql://localhost:3306/";
-        datafilename = "<id-do-fundo>";
         this.rentabilidadeDiariaMercadoCache = new TreeMap<>();
         this.rentabilidadeMediaMercadoCache = new TreeMap<>();
         this.desvioPadraoMercadoCache = new TreeMap<>();
@@ -227,7 +225,7 @@ public class InvestFundsManager {
                 }
 
                 // calcula drawdown
-                if (valorQuotaAtual <= maxValorQuota) {
+                if (Math.abs(maxValorQuota) >= 2e-7 && valorQuotaAtual <= maxValorQuota) {
                     drawdown = valorQuotaAtual / maxValorQuota - 1.0;
                 } else {
                     maxValorQuota = valorQuotaAtual;
@@ -390,8 +388,8 @@ public class InvestFundsManager {
      * @throws SQLException quando algum dado necessário não pode ser acessado pelo banco
      */
     private List<Integer> calcula_mercado(Connection connection, ExecutionInformation execucao) throws SQLException {
-        // TODO
-        String sql = "SELECT DISTINCT cnpj_fundo_id FROM doc_inf_diario_fundos WHERE rentabilidade IS NULL";
+        // Seleciona os fundos desatualizados. Isto é, fundos com cotas registradas, mas, rentabilidade nulla.
+        String sql = "SELECT DISTINCT cnpj_fundo_id FROM doc_inf_diario_fundos WHERE rentab_diaria IS NULL";
         Statement st = connection.createStatement();
         java.sql.ResultSet rs = st.executeQuery(sql);
         List<Integer> fundosSemIndicadoresDeMercado = new ArrayList<>();
@@ -413,7 +411,8 @@ public class InvestFundsManager {
      * @throws SQLException Quando não for possível acessar o banco
      */
     private int mercado_do_fundo(Connection connection, int idFundo) throws SQLException {
-        // TODO
+        // Verifica se esse fundo já tem algum registro pertencendo a algum mercado.
+        // Se existir, retorne este mercado. Caso contrário, escolha um mercado aleatoriamente para esse fundo. TODO
         String sql = "SELECT tipo_benchmark_id FROM indicadores_fundos WHERE cnpj_fundo_id=" + idFundo + " AND tipo_benchmark_id IS NOT NULL";
         Statement st = connection.createStatement();
         java.sql.ResultSet rs = st.executeQuery(sql);
@@ -433,7 +432,7 @@ public class InvestFundsManager {
      */
     private BigDecimal rentabilidade_daria_fundo(Connection connection, int idFundo, String data) throws SQLException {
         final String IMPOSSIVEL_DE_BUSCAR_RENTABILIDADE = "Não foi possível buscar a rentabilidade diária";
-        // TODO
+        // Encontra a rentabilidade diária calculada (não nula) que corresponde a esta data para um determinado fundo.
         String sql = "SELECT rentab_diaria FROM doc_inf_diario_fundos WHERE DT_COMPTC='" + data + "' AND cnpj_fundo_id=" + idFundo + " AND rentab_diaria IS NOT NULL";
         Statement st = connection.createStatement();
         java.sql.ResultSet rs = st.executeQuery(sql);
@@ -571,9 +570,8 @@ public class InvestFundsManager {
         if (cache.containsKey(cacheEntry)) {
             return cache.get(cacheEntry);
         }
-        // busca no banco de dados todos os fundos deste mercado
-        // TODO
-        String sql = "SELECT DISTINCT(cnpj_fundo_id) FROM doc_inf_diario_fundos WHERE DT_COMPTC=" + dataFinal + " and cnpj_fundo_id IN" +
+        // busca no banco de dados todos os fundos deste mercado, dentro do período definido.
+        String sql = "SELECT DISTINCT(cnpj_fundo_id) FROM doc_inf_diario_fundos WHERE DT_COMPTC='" + dataFinal + "' and cnpj_fundo_id IN" +
                 "(SELECT cnpj_fundo_id FROM indicadores_fundos WHERE tipo_benchmark_id=" + tipoBenchmarkId + " )";
         Statement st = connection.createStatement();
         java.sql.ResultSet rs = st.executeQuery(sql);
@@ -603,9 +601,8 @@ public class InvestFundsManager {
         if (cache.containsKey(data)) {
             return cache.get(data);
         }
-        // busca no banco de dados a média das rentabilidade diárias dos fundos pertencetes ao mercado
-        // TODO
-        String sql = "SELECT AVG(rentab_diaria) AS rentabilidade_benchmark FROM doc_inf_diario_fundos WHERE DT_COMPTC=" + data + " and cnpj_fundo_id IN" +
+        // busca no banco de dados a média das rentabilidade diárias dos fundos pertencetes ao mercado, na data definida.
+        String sql = "SELECT AVG(rentab_diaria) AS rentabilidade_benchmark FROM doc_inf_diario_fundos WHERE DT_COMPTC='" + data + "' and cnpj_fundo_id IN" +
                 "(SELECT cnpj_fundo_id FROM indicadores_fundos WHERE tipo_benchmark_id=" + tipoBenchmarkId + " )";
         Statement st = connection.createStatement();
         java.sql.ResultSet rs = st.executeQuery(sql);
@@ -738,13 +735,13 @@ public class InvestFundsManager {
      * @throws SQLException Quando não é possível acessar o banco
      */
     private void calcula_indice_sharp(Connection connection, int idFundo, ExecutionInformation execucao) throws SQLException {
-        // Seleciona os indices do fundo onde sharpe não foi calculado
-        // TODO
+        // Seleciona os indices do fundo onde sharpe não foi calculado. Também checa se os
+        // requisitos (num_valores e tipoBenchmarkId) nao sao nulos.
         String sql = "SELECT periodo_meses, num_valores, data_final, rentabilidade, desvio_padrao, tipo_benchmark_id FROM indicadores_fundos" +
                 " WHERE cnpj_fundo_id=" + idFundo +
                 " AND sharpe IS NULL" +
                 " AND num_valores IS NOT NULL" +
-                " AND tipoBenchmarkId IS NOT NULL";
+                " AND tipo_benchmark_id IS NOT NULL";
         Statement st = connection.createStatement();
         Statement st2 = connection.createStatement();
         java.sql.ResultSet rs = st.executeQuery(sql);
@@ -759,7 +756,8 @@ public class InvestFundsManager {
 
                 // Chaves primária é (cnpj_fundo_id, periodo_meses, data_final)
                 BigDecimal sharpe = sharpe_fundo(connection, rentabilidade, desvioPadrao, tipoBenchmarkId, dataFinal, numValores);
-                sql = "UPDATE indicadores_fundos SET sharpe=" + sharpe + " WHERE cnpj_fundo_id=" + idFundo + " and periodo_meses=" + numMeses + " and data_final=" + dataFinal;
+                // Escreve o resultado do sharpe com os valores da chave pimaria.
+                sql = "UPDATE indicadores_fundos SET sharpe=" + sharpe + " WHERE cnpj_fundo_id=" + idFundo + " and periodo_meses=" + numMeses + " and data_final='" + dataFinal + "'";
                 st2.execute(sql);
 
                 long tempoAtual = System.currentTimeMillis();
@@ -784,8 +782,8 @@ public class InvestFundsManager {
      * @throws SQLException Quando não é possível acessar o banco
      */
     private void calcula_indice_beta(Connection connection, int idFundo, ExecutionInformation execucao) throws SQLException {
-        // Seleciona os indices do fundo onde beta não foi calculado
-        // TODO
+        // Seleciona os indices do fundo onde beta não foi calculado. Também checa se os
+        // requisitos (num_valores e tipoBenchmarkId) nao sao nulos.
         String sql = "SELECT periodo_meses, num_valores, data_final, rentabilidade, tipo_benchmark_id FROM indicadores_fundos" +
                 " WHERE cnpj_fundo_id=" + idFundo +
                 " AND beta IS NULL" +
@@ -804,7 +802,7 @@ public class InvestFundsManager {
 
                 // Chaves primária é (cnpj_fundo_id, periodo_meses, data_final)
                 BigDecimal beta = beta_fundo(connection, rentabilidade, idFundo, tipoBenchmarkId, dataFinal, numValores);
-                sql = "UPDATE indicadores_fundos SET beta=" + beta + " WHERE cnpj_fundo_id=" + idFundo + " AND periodo_meses=" + numMeses + " AND data_final=" + dataFinal;
+                sql = "UPDATE indicadores_fundos SET beta=" + beta + " WHERE cnpj_fundo_id=" + idFundo + " AND periodo_meses=" + numMeses + " AND data_final='" + dataFinal + "'";
                 st2.execute(sql);
 
                 long tempoAtual = System.currentTimeMillis();
@@ -835,12 +833,9 @@ public class InvestFundsManager {
     private Object[] calcula_indicadores_DOC_INF_DIARIO(Connection connection) {
         ExecutionInformation execucao = new ExecutionInformation();
         try {
-            int idFundo = Integer.parseInt(this.datafilename);
-            calcula_rentabilidade_diaria(connection, idFundo, execucao);
-            calcula_indicadores(connection, idFundo, execucao);
+            // Atualiza todos os mercados (rentabilidade e indicadores triviais).
             List<Integer> fundosSemIndicadoresDeMercado = calcula_mercado(connection, execucao);
-            calcula_indice_sharp(connection, idFundo, execucao);
-            calcula_indice_beta(connection, idFundo, execucao);
+            // Atualiza os indicadores de mercado.
             if (ATUALIZACAO == TipoAtualizacao.COMPLETA) {
                 for (Integer idFundo_ : fundosSemIndicadoresDeMercado) {
                     calcula_indice_sharp(connection, idFundo_, execucao);
